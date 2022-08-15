@@ -1,0 +1,9 @@
+Species	Subgenus
+B. impatiens	Pyrobombus
+B. griseocollis	Pyrobombus
+B. perplexus	Pyrobombus
+B. bimaculatus	Pyrobombus
+B. auricomous	Bombius
+B. fervidus	Fervidobombus
+B. pensylvanicus	Fervidobombus
+A. mellifera	Apis
