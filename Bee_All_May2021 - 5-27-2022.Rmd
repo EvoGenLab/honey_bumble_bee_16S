@@ -1,0 +1,966 @@
+---
+title: "Bee Microbiome All code"
+author: "Mia Keady"
+date: "6/16/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: consoles
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Phylosyeq object
+```{r install packages}
+library(phyloseq)
+#install.packages("lme4")
+library(lme4)
+library(ggplot2)
+library(ape)
+#install.packages("car")
+library(car)
+library(vegan)
+#install.packages("lsmeans")
+library(lsmeans)
+library(RCurl)
+library(biomformat)
+#install.packages("reshape")
+library(reshape)
+#install.packages("effects")
+library(effects)
+#install.packages("indicspecies")
+library(indicspecies)
+library(emmeans)
+#Beta Diversity
+library(permute)
+library(lattice)
+library(dplyr)
+```
+
+```{r ps}
+#setwd("~/Desktop/OneDrive - Smithsonian Institution/Research/BeeMicrobiome")
+setwd("C:/Users/bigri/Desktop/RESEARCH/Navolle_bee_16S/Data/Final files/")
+
+feature_tab <- read.csv("FinalFiles/Bee_feature_table_dec162020.csv", header = T, row.names = 1)
+#Make compatible for phyloseq format
+asv_tab = otu_table(feature_tab, taxa_are_rows = TRUE)
+dim(asv_tab)
+# updated 233; 115 samples
+#238; 115
+
+#read in meta data file:
+# Meta_BeeRare_dec16_2020.csv, row.names = 2
+meta_data <- read.csv("FinalFiles/Merged_meta_jan12.csv", header = T, row.names = 2)
+class(meta_data)
+md <- sample_data(meta_data)
+dim(meta_data)
+# navolle has an updated jan12th version? "Merged_meta_jan12.csv"
+
+
+#read in taxonomy file
+taxonomy <- read.csv("FinalFiles/bee_taxonomy_dec162020.csv", row.names=1)
+taxonomy <- as.matrix(taxonomy)
+taxonomy_final = tax_table(taxonomy)
+
+library(Biostrings)
+DNAseqs <- readDNAStringSet("FinalFiles/Bee_DNAsequences2.fasta")
+
+# You can also add a phylogenetic tree here, if you have one
+tree = read.tree("FinalFiles/tree_copy.nwk")
+
+# Merge it all together
+#Make phyloseq object
+ps <- merge_phyloseq(asv_tab, taxonomy_final, md, tree, DNAseqs)
+
+df.ps <- as(sample_data(ps), "data.frame")
+#115 samples
+
+# data is already rarifed
+
+```
+
+```{r subset}
+# Subset for top three species:
+ps3 <- subset_samples(ps, Species %in% c("Apismellifera", "Bombusimpatiens", "Bombusgriseocollis"))
+ps3 <- filter_taxa(ps3, function(x) sum(x) !=0, TRUE) # 227 taxa; 105 samples
+df.ps3<-as(sample_data(ps3), "data.frame")
+
+
+A.mel <- subset_samples(ps, (Species == "Apismellifera"))
+A.mel = filter_taxa(A.mel, function(x) sum(x) !=0, TRUE) #Since we subsetted the ps, we need to remove ASVs that no longer have sequence data. 
+df.Amel <- as(sample_data(A.mel), "data.frame")
+# 48 samples
+
+B.imp <- subset_samples(ps, (Species == "Bombusimpatiens"))
+B.imp = filter_taxa(B.imp, function(x) sum(x) !=0, TRUE)
+df.Bimp <- as(sample_data(B.imp), "data.frame")
+
+B.gris <- subset_samples(ps, (Species == "Bombusgriseocollis"))
+B.gris = filter_taxa(B.gris, function(x) sum(x) !=0, TRUE)
+df.Bgris <- as(sample_data(B.gris), "data.frame")
+```
+
+```{r explore, include= FALSE, eval = FALSE}
+
+library(plyr)
+count(df.ps3$Species)
+
+count(df.ps3$InfSeq) 
+# No inf: 40; Yes infection 65
+
+count(df.ps3$InfSeqType)
+# multi 10; Nosema 6; Trypansome 49; None: 40
+
+library(dbplyr)
+d1 <- ddply(df.ps3, .(Species,InfSeq), summarize, sample_size=length(Species))
+d1
+
+d2 <- ddply(df.ps3, .(Species,NosSeq, TrypSeq), summarise, sample_size = length(Species))
+d2
+# Apis has 10 Tryp; 5 Nosema; and 7 both
+# B. gris has 14 Tryp; 1 Nosema, and 2 both
+# B. impat has 25 Tryp; 0 only Nosema, 1 both
+
+# Trypansome is more common infection
+
+d3 <- ddply(df.ps3, .(Species, InfSeqType), summarize, sample_size=length(Species))
+d3
+
+d4 <- ddply(df.ps3, .(Species, NosSeq), summarise, sample_size = length(Species))
+d4
+
+d5 <- ddply(df.ps3, .(Species, TrypSeq), summarise, sample_size = length(Species))
+d5
+
+```
+
+```{r colors}
+n_fun <- function(x){
+  return(data.frame(y = max(x), label = paste0("n = ",length(x))))
+}
+
+color.inf <- c("#878787","#d6604d")
+
+color.inftype <- c("#f46d43", "#878787","#fec44f", "#74add1")
+# 4: Multi,None, Nosema, Trypan,
+# nosema #fee08b"
+```
+
+## Find Top Phyla for each host
+```{r Top Phyla}
+## all phyla 
+sum(taxa_sums(ps))
+#185,211 - somehow now we are 58,345... this is b/c we rarified the dataset.
+get_taxa_unique(ps, "Phylum") # 5 phyla
+
+get_taxa_unique(A.mel, "Phylum")
+# 5 phyla
+
+### apis ####
+100 *sum(taxa_sums(subset_taxa(A.mel, Phylum == "Actinobacteria")))/sum(taxa_sums(A.mel))
+#18.65%
+ntaxa(subset_taxa(A.mel, Phylum == "Actinobacteria"))
+# 2 taxa
+
+100 *sum(taxa_sums(subset_taxa(A.mel, Phylum == "Bacteroidetes")))/sum(taxa_sums(A.mel))
+# 15.05%
+ntaxa(subset_taxa(A.mel, Phylum == "Bacteroidetes"))
+# 3 taxa
+
+100 *sum(taxa_sums(subset_taxa(A.mel, Phylum == "Firmicutes")))/sum(taxa_sums(A.mel))
+#22.94
+ntaxa(subset_taxa(A.mel, Phylum == "Firmicutes"))
+# 15 taxa
+
+100 *sum(taxa_sums(subset_taxa(A.mel, Phylum == "Proteobacteria")))/sum(taxa_sums(A.mel))
+# 75.26%
+ntaxa(subset_taxa(A.mel, Phylum == "Proteobacteria"))
+# 33 taxa
+
+100 *sum(taxa_sums(subset_taxa(A.mel, Phylum == "Tenericutes")))/sum(taxa_sums(A.mel))
+# 10.80% ?? 
+ntaxa(subset_taxa(A.mel, Phylum == "Tenericutes"))
+ # 1 taxa
+
+## repeat for both bombus species.
+```
+
+```{r Relative abundance plot}
+# plotting all bee species using ps
+
+get_taxa_unique(ps, "Kingdom")
+get_taxa_unique(ps, "Phylum")
+get_taxa_unique(ps, "Class")
+get_taxa_unique(ps, "Genus")
+get_taxa_unique(ps, "Species")
+
+
+#species difference
+s1 <- tax_glom(ps, taxrank = 'Phylum')
+s2= merge_samples(s1, "Species")
+s2 <- transform_sample_counts(s2, function(x) x/sum(x))
+s4 <- psmelt(s2)
+s4$Phylum <- as.character(s4$Phylum)
+
+cb3 <- c("#a6cee3", "#1f78b4", "#b2df8a", "#33a02c", "#fb9a99", "#e31a1c", "#fdbf6f", "#ff7f00", "#cab2d6", "#6a3d9a", "#ffff99", "#b15928", "blueviolet", "darkgoldenrod", "chartreuse3", "burlywood4", "deeppink4")
+
+plot.rel.ab <- ggplot(data=s4, aes(x=Sample, y=Abundance, fill=Phylum))
+plot.rel.ab + geom_bar(aes(), stat="identity", position="stack")  + 
+  ylab("Relative abundance (% of total sequences)")+ theme_classic() + theme_bw()  + xlab(" ") +
+  theme_classic()+ scale_fill_manual(values=cb3,name="Phylum") +  theme(legend.title = element_text(size = 20)) + theme(legend.text = element_text(size = 18)) +
+  theme(plot.title =element_text(size=20, angle = 90)) + theme(axis.text.x =element_text(size=14, angle= 45, hjust = 1)) + theme(axis.title.y =element_text(size=18, vjust=2)) +
+  theme(axis.text.y =element_text(size=14))
+
+
+#italicized species names
+plot.rel.ab + geom_bar(aes(), stat="identity", position="stack")  + 
+  ylab("Relative abundance (% of total sequences)")+ theme_classic() + theme_bw()  + xlab(" ") +
+  theme_classic()+ scale_fill_manual(values=cb3,name="Phylum") +  theme(legend.title = element_text(size = 20)) + theme(legend.text = element_text(size = 18)) +
+  theme(plot.title =element_text(size=20, angle = 90)) + theme(axis.text.x =element_text(size=14, angle= 45, hjust = 1, face = "italic")) + theme(axis.title.y =element_text(size=18, vjust=2)) +
+  theme(axis.text.y =element_text(size=14)) + scale_x_discrete(labels = c("Apismellifera" = "Apis mellifera", "Bombusgriseocollis" = "Bombus griseocollis", "Bombusimpatiens" = "Bombus impatiens",
+                            "Bombusfervidus" = "Bombus fervidus", "Bombusauricomous" = "Bombus auricomous", "Bombusbimaculatus" = "Bombus bimaculatus", 
+                            "Bombusperplexus" = "Bombus perplexus", "Bombuspensylvanicus" = "Bombus pensylvanicus")) 
+
+#ggsave("Rel.Abund.Species.Phylum_March21.pdf", plot = last_plot(), device = NULL, path = NULL,
+#     scale = 1, width = 10, height = 7.2, units = c("in"),
+#   dpi = 600, limitsize = TRUE) 
+```
+
+## Find Core Bacteria for each bee species; ASV with 80% frequency doesn't occur in 2 bumble bees
+```{r Apis core}
+Apis.core = filter_taxa(A.mel, function(x) sum(x > 1) > (0.80*length(x)), TRUE)
+get_taxa_unique(Apis.core, "ASV")
+# ASV 23, 6, 7 and 1 in 80% of apis mellifera gut microbiomes
+Apis.core@tax_table
+Apis.core.tax <- Apis.core@tax_table
+Apis.core.tax <- as.data.frame(Apis.core.tax)
+
+```
+
+```{r Bobus impatiens core}
+Bimp.core = filter_taxa(B.imp, function(x) sum(x > 1) > (0.80*length(x)), TRUE)
+get_taxa_unique(Bimp.core, "ASV")
+```
+
+```{r Bobus gris core}
+
+Bgris.core = filter_taxa(B.gris, function(x) sum(x > 1) > (0.80*length(x)), TRUE)
+get_taxa_unique(Bgris.core, "ASV")
+
+```
+
+# Heatmap
+```{r heatmap}
+#setwd("C:/Users/hc/Desktop/RESEARCH/Navolle_bee_16S/Data")
+
+library("ape")
+library("funrar")
+library("ggdendro")
+library("geiger")
+library("dplyr")
+library("dendextend")
+require(RColorBrewer)
+
+
+plot.phylo(tree, cex=0.5)
+#asv_tab is the table of raw abundance
+asv_tab_rel<-t(make_relative(t(asv_tab)))
+write.table(asv_tab_rel, file="./Finalfiles/asv_tab_rel.txt", sep="\t", row.names = T)
+
+summary(asv_tab)
+table(asv_tab) 
+
+## Do not do these steps if you want to use the run asv_tab_rel 
+## make a new asv_tab_rel where bact needs to be present with at least 10% rel abund in at least 1 bee
+
+#make a func for greater than than 10%
+greater_than  <- function(rel_abun) {
+  count <- sum(rel_abun > 0.1) 
+  return(count)
+}
+
+#create a vector that counts of the no. of times an asv is greater than 10% in a bee
+filter<-(apply(asv_tab_rel, 1, greater_than))
+
+#this produce a row index that satisfies the condiction
+which(filter > 0)
+asv_tab_rel<-asv_tab_rel[which(filter > 0),] # subset the rel table based on criterion, left with 70 ASV's
+
+## End of subsetting of ASVs by min relative abundance ##
+
+
+#check correspondence between tree and asv table
+#num of asv in table 123, no. of tips in tree 287; diff is 164
+nchk<-name.check(tree, (asv_tab_rel))
+nchk
+
+#option2, filterout bact in asv_tab_rel that's not at least 10% in at least 1 bee
+
+#tree has a lot of tips that are not in asv table
+tree2<-drop.tip(tree, nchk$tree_not_data)
+tree2 
+
+#start conversion process to dendrogram 
+is.rooted(tree2) #T
+is.binary(tree2) #F
+
+ctrl <- chronos.control(nb.rate.cat = 1, eval.max=50)
+tree2.c<-chronos(tree2, model="rel",control=ctrl)
+tree2.c<-multi2di(tree2.c)
+is.binary.tree(tree2.c)
+is.ultrametric(tree2.c) 
+plot.phylo(tree2.c, cex = 0.5)
+
+tree2.d<-as.hclust.phylo(tree2.c, check=T) #convert from phylo to hclust
+tree2.d<-as.dendrogram(tree2.d) #then to dendrogram
+#tree.d<-set(tree.d,"labels_cex",0.05)
+
+ggdendrogram(tree2.d,rotate=270, cex=0.1)
+plot(tree2.d, horiz=T,cex=0.01)
+labels(tree2.d) #these are the tip labels
+
+#create a new table to match tip labels and otu table
+
+
+#meta_data contains bumble bee no.s and the species names, 114 bees
+dim(asv_tab_rel) #(when subsetted : 70 115)
+#make a second meta_data table and rename the species names
+meta_data2<-meta_data
+
+#shorten genus names in meta table
+meta_data2<-data.frame(lapply(meta_data2, function(x) {gsub("Bombus", "B. ", x)}))
+meta_data2<-data.frame(lapply(meta_data2, function(x) {gsub("Bombous", "B. ", x)}))
+meta_data2<-data.frame(lapply(meta_data2, function(x) {gsub("Apis", "A. ", x)}))
+
+#species to subgenus map done by Mia
+sg<-read.table("./Finalfiles/subgenus.txt", sep="\t", header=T)
+sg
+
+meta_data2<-right_join(meta_data2,sg, by="Species") #join this to meta_table2, add subgenus label
+
+rownames(meta_data2)<-rownames(meta_data) #replace missing rownames
+meta_data2<-meta_data2[order(meta_data2$Subgenus,meta_data2$Species),] #order by subgenera and species
+paste(row.names(meta_data2), meta_data2$Species, meta_data2$Subgenus) #make sure everything line up
+
+bee_order<-row.names(meta_data2) #use this to order the asv_tab columns, we are adding bee species name to bee labels
+bee_order
+
+#reorder columns of asv table based on index produced by a match btw row names of meta_data2 and colnames of asv table
+asv_tab_rel<-asv_tab_rel[,match(bee_order, colnames(asv_tab_rel))]
+colnames(asv_tab_rel)
+
+labels(tree2.d)
+#make a new taxonomy df w rows that match tips of the dendrogram
+taxonomy2<-as.data.frame(taxonomy[match(labels(tree2.d), rownames(taxonomy)),])
+#taxonomy2<-rev(taxonomy2) #rev the row order so the ASV names follow the order in the tree
+
+## with no 10% filtering 
+display.brewer.all()
+#heatcol<-topo.colors(5)
+heatcol<-(brewer.pal(n=9, "YlOrRd")) #choose a palette, this is actually default
+
+
+par(oma=c(3,1,1,2))
+heatmap(asv_tab_rel, scale="column", col=heatcol, Rowv=tree2.d, Colv=NA, labRow = paste(row.names(asv_tab_rel), taxonomy2$Order) , labCol = paste(colnames(asv_tab_rel), meta_data2$Species),  cexCol = 0.3, cexRow = 0.3)
+legend(-0.1,1, fill = heatcol, legend = c("0 to 0.1", "0.1 to 0.2", "0.3 to 0.4", "0.4 to 0.5", "0.5 to 0.6", "0.6 to 0.7", "0.7 to 0.8","0.8 to 0.9","0.9 to 1.0"),bty="n",cex=0.55)
+
+
+## with 10% filtering, only 8 colors - x-axis dendrogram
+heatcol<-(brewer.pal(n=8, "YlOrRd")) 
+par(oma=c(3,1,1,2))
+heatmap(asv_tab_rel, scale="column", col=heatcol, Rowv=tree2.d, labRow = paste(row.names(asv_tab_rel), taxonomy2$Order) , labCol = paste(colnames(asv_tab_rel), meta_data2$Species),  cexCol = 0.3, cexRow = 0.5)
+legend(-0.1,40, fill = heatcol, legend = c("0.1 to 0.2", "0.3 to 0.4", "0.4 to 0.5", "0.5 to 0.6", "0.6 to 0.7", "0.7 to 0.8","0.8 to 0.9","0.9 to 1.0"),bty="n",cex=0.55)
+
+#use this 1-17-2022
+## with 10% filtering, only 8 colors
+pdf("bee_heatmap_filter-2022-3-9.pdf", width=8, height=11)
+heatcol<-(brewer.pal(n=8, "YlOrRd")) 
+par(oma=c(3,5,1,2))
+heatmap(asv_tab_rel, scale="column", col=heatcol, Rowv=tree2.d, Colv=NA, labRow = paste(row.names(asv_tab_rel), taxonomy2$Order) , labCol = paste(colnames(asv_tab_rel), meta_data2$Species),  cexCol = 0.3, cexRow = 0.5)
+legend(x="topleft", fill = heatcol, legend = c("0.1 to 0.2", "0.3 to 0.4", "0.4 to 0.5", "0.5 to 0.6", "0.6 to 0.7", "0.7 to 0.8","0.8 to 0.9","0.9 to 1.0"),bty="n",cex=0.55)
+dev.off()
+
+
+```
+
+##Find out most common asv for each bee species
+
+```{r}
+
+sp_names<-as.matrix(table(meta_data2$Species))
+sink("top_15_relabund_freq_each_sp_7-10-2022.txt", append = T)
+#skip B pen because only 1 indiv
+
+for (i in c(1,2,3,4,5,6,8)){
+
+sp<-meta_data2[meta_data2$Species==rownames(sp_names)[i],] #choose rows in meta that match species name
+sp_order<-rownames(sp)
+sp_asv_tab_rel<-asv_tab_rel[,match(sp_order, colnames(asv_tab_rel))]
+
+avg_abun<-as.data.frame(apply(sp_asv_tab_rel,1, mean)) #calc avg rel abun of asv
+non_zero<-as.data.frame(apply(sp_asv_tab_rel,1, function(c)sum(c!=0))) #cal no of time asv not zero
+
+
+print(rownames(sp_names)[i])
+print(colnames(sp_asv_tab_rel))
+print(length(colnames(sp_asv_tab_rel)))
+#produce top 3 abundance and freq for that bee species
+print(avg_abun %>% arrange(desc(`apply(sp_asv_tab_rel, 1, mean)`)) %>% slice(1:15))
+print(non_zero %>% arrange(desc(`apply(sp_asv_tab_rel, 1, function(c) sum(c != 0))`)) %>% slice(1:15))
+
+}
+sink()
+```
+
+#Find average number of ASV per bee species
+```{r}
+
+#make empty vector
+avg_asv_sp=vector()
+
+for (i in c(1,2,3,4,5,6,8)) {
+sp<-meta_data2[meta_data2$Species==rownames(sp_names)[i],]
+sp_order<-rownames(sp)
+sp_asv_tab_rel<-asv_tab_rel[,match(sp_order, colnames(asv_tab_rel))]
+#count number of non-zeros per column (indiv bee)
+avg_asv_sp[i]<-mean(colSums(sp_asv_tab_rel !=0))
+}
+
+#pensylavanicus only 1 indiv
+i<-7
+sp<-meta_data2[meta_data2$Species==rownames(sp_names)[i],]
+sp_order<-rownames(sp)
+sp_asv_tab_rel<-asv_tab_rel[,match(sp_order, colnames(asv_tab_rel))]
+avg_asv_sp[i]<-sum(sp_asv_tab_rel !=0)
+
+mean(avg_asv_sp)
+sd(avg_asv_sp)
+#max(colSums(sp_asv_tab_rel !=0))
+#min((colSums(sp_asv_tab_rel !=0)))
+
+
+```
+
+#Calculate scatterplot matrix of ASVs in each focal species
+
+```{r}
+library(corrplot)
+library(car)
+library(dplyr)
+library(tibble)
+library(Hmisc)
+
+for (i in c(1,5,6)){
+sp<-meta_data2[meta_data2$Species==rownames(sp_names)[i],] #choose rows in meta that match species name
+sp_order<-rownames(sp)
+sp_asv_tab_rel<-as.data.frame(asv_tab_rel[,match(sp_order, colnames(asv_tab_rel))])
+avg_abun<-as.data.frame(apply(sp_asv_tab_rel,1, mean))
+top5<-avg_abun %>% arrange(desc(`apply(sp_asv_tab_rel, 1, mean)`)) %>% slice(1:5) #choose top 5 avg abundance
+top5<-data.frame(rownames(top5))
+colnames(top5)<-("rowname")
+sp_asv_tab_rel_top5<-left_join(top5,rownames_to_column(sp_asv_tab_rel)) #keep only from rel abund top 5
+sp_asv_tab_rel_top5<-t(sp_asv_tab_rel_top5)
+colnames(sp_asv_tab_rel_top5)<-sp_asv_tab_rel_top5[1,]
+sp_asv_tab_rel_top5<-as.data.frame(sp_asv_tab_rel_top5[-1,])
+sp_asv_tab_rel_top5<-sapply(sp_asv_tab_rel_top5, as.numeric)
+#car::scatterplotMatrix(~ ASV3+ ASV1+ASV6+ASV7+ASV17, data=sp_asv_tab_rel_top5)
+corr<-rcorr(sp_asv_tab_rel_top5, type="spearman")#this is a special format of rcorr
+corr$r
+corr$P
+jpeg(paste(rownames(sp_names)[i],"_spearman_corr.jpg", sep=""), width=5, height=5, units = "in", res=300)
+
+#corrplot (corr$r, type = "upper", order = "original")
+
+corrplot(corr$r, type = "upper", order = "original", p.mat = corr$P, sig.level = 0.05, tl.col = "black", insig="blank", title = rownames(sp_names)[i], mar = c(2, 2, 4, 1), outline=F)
+
+dev.off()
+}
+```
+
+
+# Alpha diversity
+```{r Alpha diversity}
+# testing top three most abundant species using ps3
+
+#test assumptions SR_R
+hist(df.ps3$SR_R)
+shapiro.test(df.ps3$SR_R)
+#p-value 0.3692 (0.4995 dec 2020) data is normal (above 0.05)
+#levene tests for varience
+leveneTest((SR_R)~Species, data=df.ps3)
+#p-value = 0.8455 (0.6273 dec 2020) so similar variences
+
+####----ANOVA----####
+#Stat test (1 way ANOVA) for diff in richness and Faith's PD. Restrict to 3 main spp
+SR_aov <- aov(SR_R ~ Species, data=df.ps3)
+summary(SR_aov)
+#p-value = 0.000179 (9.13e-09), there is significant differences in SR between groups
+
+PD_aov <- aov(PD_R ~ Species, data = df.ps3)
+summary(PD_aov)
+#p-value = 2.01e-06 (0.0233), there is sig. diff. in PD between groups
+
+
+#test for normality of data in each species (QQ plot)
+plot(SR_aov, 2)
+#show qqplot, it looks like a staircase
+plot(PD_aov, 2)
+
+
+#use asterisks to show sig / non-sig differences thru Tukey's HSD (* = sig.)
+TukeyHSD(SR_aov)
+#Fit: aov(formula = SR ~ Species, data = df.ps3)
+#$Species
+#diff       lwr       upr     p adj
+#Bombusgriseocollis-Apismellifera   -3.9523810 -6.207596 -1.697165 0.0001893
+#Bombusimpatiens-Apismellifera      -0.2857143 -2.199328  1.627900 0.9328988
+#Bombusimpatiens-Bombusgriseocollis  3.6666667  1.279971  6.053362 0.0011841
+
+#no sig dif between impatiens and honey
+
+#$Species (dec 2020)
+#diff       lwr        upr     p adj
+#Bombusgriseocollis-Apismellifera   -5.877551 -7.977609 -3.7774933 0.0000000
+#Bombusimpatiens-Apismellifera      -2.163265 -3.945223 -0.3813073 0.0130581
+#Bombusimpatiens-Bombusgriseocollis  3.714286  1.491794  5.9367779 0.0003845
+
+# all sig now?
+
+TukeyHSD(PD_aov)
+#$Species
+#diff        lwr       upr     p adj
+#Bombusgriseocollis-Apismellifera    1.0958253  0.5497718 1.6418788 0.0000180
+#Bombusimpatiens-Apismellifera       0.8153219  0.3519802 1.2786637 0.0001778
+#Bombusimpatiens-Bombusgriseocollis -0.2805034 -0.8583921 0.2973853 0.4830935
+
+#no sig diff between bumblebees
+
+
+#$Species (dec 2020)
+#diff         lwr         upr     p adj
+#Bombusgriseocollis-Apismellifera   -0.18874237 -0.35230589 -0.02517886 0.0194464
+#Bombusimpatiens-Apismellifera      -0.08481009 -0.22359834  0.05397815 0.3177270
+#Bombusimpatiens-Bombusgriseocollis  0.10393228 -0.06916707  0.27703163 0.3303810
+
+# only gris and apis sig now
+
+plot(TukeyHSD(PD_aov))
+plot(TukeyHSD(SR_aov))
+```
+
+```{r alpha diversity figures}
+library(RColorBrewer)
+library(colorRamps)
+library(gridExtra)
+library(ggplot2)
+
+
+p1 <-c('#e66101','#fdb863','#b2abd2','#5e3c99')
+p2 <-c('#b2abd2','#5e3c99')
+p3 <- c('#0571b0','#5e3c99')
+p4 <- c('#d8b365', '#5ab4ac')
+p5 <- c('#ef8a62', '#67a9cf')
+p6 <- c('#e66101','#fdb863','#b2abd2','#5e3c99','#d8b365', '#5ab4ac','#0571b0','#67a9cf')
+
+####---- BOXPLOTS ----####
+
+#Box plot of richness and PD by species, no need to transform
+#arrange species by top 3 spp, followed by rest
+
+#boxplot SR: https://www.r-graph-gallery.com/267-reorder-a-variable-in-ggplot2.html
+library(forcats)
+library(dplyr)
+n_fun <- function(x){
+  return(data.frame(y = max(x), label = paste0("N = ",length(x))))
+}
+df.ps %>%
+  mutate(Species = fct_reorder(Species, SR_R,.fun='length',.desc = TRUE)) %>%
+  ggplot(aes(df.ps, y=SR_R, x =Species)) + 
+  stat_boxplot(aes(color= Species), geom ='errorbar', width=0.2, show.legend = F)+
+  scale_colour_manual(values = c("black", "black", "black", "black", "black", "black", "black", "black")) +
+  geom_boxplot(aes(fill=Species))+ 
+  theme_bw()+
+  labs(x=" ", y=expression("Species Richness"))+
+  scale_fill_manual(values = p6,labels = c("Apis mellifera", "Bombus impatiens",
+                                           "Bombus griseocollis", "Bombus fervidus",
+                                           "Bombus auricomous", "Bombus bimaculatus", "Bombus perplexus", "Bombus pensylvanicus")) + 
+  theme(axis.text =element_text(size=16)) + theme(axis.title =element_text(size=18, vjust=3)) +                                      
+  stat_summary(fun.data = n_fun, geom = "text", vjust = -0.5) +
+  theme(legend.text = element_text(size = 16, face = "italic")) +
+  scale_x_discrete(labels = c("Apismellifera" = "Apis mellifera", "Bombusgriseocollis" = "Bombus griseocollis", "Bombusimpatiens" = "Bombus impatiens",
+                              "Bombusfervidus" = "Bombus fervidus", "Bombusauricomous" = "Bombus auricomous", "Bombusbimaculatus" = "Bombus bimaculatus", 
+                              "Bombusperplexus" = "Bombus perplexus", "Bombuspensylvanicus" = "Bombus pensylvanicus")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, face = "italic"))
+
+#ggsave("SpeciesRichness_march21.boxplot.pdf", plot = last_plot(), device = NULL, path = NULL,
+#scale = 1, width = 10, height = 7.2, units = c("in"),
+#dpi= 600, limitsize = TRUE)  
+
+
+#PD by species no transformation
+
+#Do I need to do a kruskal wallis test?? ---> ask! if we didnt meet assumptions, run instead of anova
+n_fun2 <- function(x){
+  return(data.frame(y = max(x), label = paste0("N = ",length(x))))
+}
+df.ps %>%
+  mutate(Species = fct_reorder(Species, PD_R,.fun='length',.desc = TRUE)) %>%
+  ggplot(aes(df.ps,y=PD_R, x =Species)) + 
+  stat_boxplot(aes(color= Species), geom ='errorbar', width=0.2, show.legend = F)+
+  scale_colour_manual(values = c("black", "black", "black", "black", "black","black", "black", "black")) +
+  geom_boxplot(aes(fill=Species))+
+  theme_bw()+
+  labs(x=" ", y="Phylogenetic Diversity")+
+  scale_fill_manual(values = p6, labels  = c("Apis mellifera", "Bombus impatiens",
+                                             "Bombus griseocollis", "Bombus fervidus",
+                                             "Bombus auricomous", "Bombus bimaculatus", "Bombus perplexus", "Bombus pensylvanicus")) + 
+  theme(axis.text =element_text(size=16)) + theme(axis.title =element_text(size=18, vjust=3)) +
+  stat_summary(fun.data = n_fun2, geom = "text", vjust = -0.5) +
+  theme(legend.text = element_text(size = 16, face = "italic")) + theme(legend.title =  element_text(size = 18)) +
+  scale_x_discrete(labels = c("Apismellifera" = "Apis mellifera", "Bombusgriseocollis" = "Bombus griseocollis", "Bombusimpatiens" = "Bombus impatiens",
+                              "Bombusfervidus" = "Bombus fervidus", "Bombusauricomous" = "Bombus auricomous", "Bombusbimaculatus" = "Bombus bimaculatus", 
+                              "Bombusperplexus" = "Bombus perplexus", "Bombuspensylvanicus" = "Bombus pensylvanicus")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, face = "italic"))
+
+#ggsave("PhylogenicDiversity_march21.boxplot.pdf", plot = last_plot(), device = NULL, path = NULL,
+#scale = 1, width = 10, height = 7.2, units = c("in"),
+#dpi = 600, limitsize = TRUE) 
+
+```
+
+# Beta diversity
+```{r Beta diversity}
+
+####----ADONIS----####
+
+#bray 3 focal species
+psmain.prop <- transform_sample_counts(ps3, function(otu) otu/sum(otu))
+bray_main <- phyloseq::distance(psmain.prop, "bray")
+ord.pcoa.braymain <- ordinate(psmain.prop, method="PCoA", distance="bray")
+
+set.seed(323)
+bray_adonismain <- adonis(bray_main ~ Species, data = df.ps3)
+bray_adonismain
+#p-value = 0.001 there is a difference species accounts for 22%
+
+
+#bray bombus but with 2 main species
+psbom_main <- subset_samples(ps, Species %in% c("Bombusimpatiens", "Bombusgriseocollis"))
+df.psbom_main<-as(sample_data(psbom_main), "data.frame")
+
+psbommain.prop <- transform_sample_counts(psbom_main, function(otu) otu/sum(otu))
+bray_bommain <- phyloseq::distance(psbommain.prop, "bray")
+ord.pcoa.braybommain <- ordinate(psbommain.prop, method="PCoA", distance="bray")
+
+set.seed(323)
+bray_adonisbommain <- adonis(bray_bommain ~ Species, data = df.psbom_main)
+bray_adonisbommain
+#p-value = 0.002 there is a difference
+# between 2 main bombus species species accounts for 4.628% 
+
+####---Dispersion---####
+
+#https://cran.r-project.org/web/packages/egg/vignettes/Ecosystem.html or cowplot
+
+#between 3 focal groups
+testdis3<-df.ps3[["Species"]]
+class(testdis3)
+levels(testdis3)
+
+#bray
+a_3 <- betadisper(bray_main, testdis3)
+anova(a_3)
+#p-value = 3.439e-10 so dispersion?
+dotchart(a_3$distances)
+
+
+
+TukeyHSD(a_3)
+head(a_3$vectors)
+palette()
+plot(a_3, label = 0)
+
+#cent <- as.data.frame(a_3$centroids)
+#ggplot(cent)
+
+#https://ggplot2.tidyverse.org/reference/geom_dotplot.html
+
+dist<-as.data.frame(a_3$distances)
+combo <- merge(dist, df.ps3, by = "row.names" )
+
+
+#library(dplyr)
+p7 <- c('#e66101','#fdb863','#b2abd2')
+
+ggplot(combo, aes(x = Species, fill = Species, y = a_3$distances)) + ylab ("Distances") + xlab ("Species") + geom_dotplot(binwidth = 0.009, binaxis = "y") +
+  scale_x_discrete(labels = c("Apismellifera" = "Apis mellifera", "Bombusgriseocollis" = "Bombus griseocollis", "Bombusimpatiens" = "Bombus impatiens")) +
+                                             theme(axis.text.x = element_text(angle = 45, hjust = 1, face = "italic"))                                         
+
+#ggsave("bray_dispersion.jpeg", plot = last_plot(), device = NULL, path = NULL,
+#scale = 1, width = 10, height = 7.2, units = c("in"),
+#dpi = 600, limitsize = TRUE)
+
+#ps3.prop <- transform_sample_counts(ps3, function(otu) otu/sum(otu))
+#plot_ordination(ps3.prop, a_3, color="Species", title="Bray PCoA Relative Abundance") +
+  #theme(text = element_text(size = 16)) + geom_point(size = 4) #+ #stat_ellipse(aes(group=Species)) 
+
+#a_3$distances
+#a_3$vectors
+
+str(a_3)
+boxplot(a_3)
+#permutest(a_3,permutations = 99, pairwise = TRUE)
+
+#jaccards
+b_3 <- betadisper(jaccmain, testdis3)
+anova(b_3)
+#p-value = 8.074e-15 so dispersion
+TukeyHSD(b_3)
+#bombus spp different than apis
+plot(b_3, label = 0)
+
+boxplot(b_3)
+
+
+
+dist2<-as.data.frame(b_3$distances)
+combo2 <- merge(dist2, df.ps3, by = "row.names" )
+
+
+ggplot(combo2, aes(x = Species, fill = Species, y = b_3$distances)) + ylab ("Distances") + xlab ("Species") + geom_dotplot(binwidth = 0.009, binaxis = "y") +
+  scale_x_discrete(labels = c("Apismellifera" = "Apis mellifera", "Bombusgriseocollis" = "Bombus griseocollis", "Bombusimpatiens" = "Bombus impatiens")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, face = "italic"))                                         
+
+#ggsave("jaccards_dispersion.jpeg", plot = last_plot(), device = NULL, path = NULL,
+#scale = 1, width = 10, height = 7.2, units = c("in"),
+#dpi = 600, limitsize = TRUE)
+
+#unifrac
+unimain <-phyloseq::distance(ps3, "unifrac")
+c_3 <- betadisper(unimain, testdis3)
+anova(c_3)
+#p-value < 2.2e-16, dispersion
+TukeyHSD(c_3)
+#apis different
+plot(c_3, label.cex = 0)
+boxplot(c_3)
+
+
+#library(pairwiseAdonis)
+#pairwise.adonis2(bray~Species, data=df.ps)
+
+####----ADONIS PT 2----####
+
+#jacc all:
+jacc_adonis <- adonis(jacc ~ Species, data = df.ps)
+jacc_adonis
+#p-value- 0.001, there is a diff, species accounts for 29.3% of diff
+
+#jacc focal species:gives error! - make jacc for focal species!!
+jaccmain <-phyloseq::distance(ps3, "jaccard", binary = T)
+jacc_adonismain <- adonis(jaccmain ~ Species, data = df.ps3)
+jacc_adonismain
+# p value 0.001, species = 23.8%
+
+
+
+```
+
+```{r Beta diversity figures}
+####---- PCoA ----####
+#Bray , all + only bombus <- this might be main figure
+
+#Bray looks at relative abundance
+ps2.prop <- transform_sample_counts(ps, function(otu) otu/sum(otu))
+bray <- phyloseq::distance(ps2.prop, "bray")
+ord.pcoa.bray <- ordinate(ps2.prop, method="PCoA", distance="bray")
+
+c4 <- c("#a6cee3","#1f78b4","#b2df8a","#33a02c","#fb9a99","#e31a1c","#fdbf6f","#ff7f00")
+c3<- c("#a6cee3", "#fb9a99","#e31a1c")
+
+plot_ordination(ps2.prop, ord.pcoa.bray, color="Species", title="Bray PCoA Relative Abundance") +
+  theme(text = element_text(size = 16)) + geom_point(size = 4) + stat_ellipse(aes(group=Species)) + 
+  scale_color_manual(values= c4) 
+
+ 
+
+#ggsave("Bray_dec_all.pdf", plot = last_plot(), device = NULL, path = NULL,
+#scale = 1, width = 10, height = 7.2, units = c("in"),
+#dpi = 600, limitsize = TRUE)
+
+#bray with only bombus?
+
+# jaccard all
+jacc <- phyloseq::distance(ps, "jaccard", binary = T)
+jacc.ord <- ordinate(ps, method = "PCoA", jacc)
+jacc.plot <- plot_ordination(ps, jacc.ord, color = "Species", title= "Jaccards PCoA")
+jacc.plot + theme(text = element_text(size = 16)) + geom_point(size = 4) + stat_ellipse(aes(group=Species)) +
+  scale_color_manual(values=c4)
+
+
+#ggsave("Jaccard_dec_all.pdf", plot = last_plot(), device = NULL, path = NULL,
+#scale = 1, width = 10, height = 7.2, units = c("in"),
+#dpi = 600, limitsize = TRUE)
+
+
+```
+
+# Gamma diversity
+```{r species accumulation curves}
+
+comm_all <- as.data.frame(t(ps@otu_table))
+
+
+spec_all <- specaccum(comm_all, method = "exact", permutations = 100,
+          conditioned =TRUE,  w = NULL)
+
+plot(spec_all)
+
+
+ps_apis <- subset_samples(ps, Species %in% c("Apismellifera"))
+
+ps_apis <- filter_taxa(ps_apis,function(x) sum(x) !=0, TRUE)
+
+
+ps_imp <-subset_samples(ps, Species %in% c( "Bombusimpatiens"))
+
+ps_imp <- filter_taxa(ps_imp,function(x) sum(x) !=0, TRUE)
+
+ps_gris <-subset_samples(ps, Species %in% c("Bombusgriseocollis"))
+
+ps_gris <- filter_taxa(ps_gris,function(x) sum(x) !=0, TRUE)
+
+comm_apis <-  as.data.frame(t(ps_apis@otu_table))
+
+comm_gris <-  as.data.frame(t(ps_gris@otu_table))
+
+comm_imp <-  as.data.frame(t(ps_imp@otu_table))
+
+
+spec_apis <- specaccum(comm_apis, method = "random", permutations = 100,
+                      conditioned =TRUE,  w = NULL)
+
+
+spec_imp <- specaccum(comm_imp, method = "random", permutations = 100,
+                       conditioned =TRUE,  w = NULL)
+
+
+spec_gris <- specaccum(comm_gris, method = "random", permutations = 100,
+                       conditioned =TRUE,  w = NULL)
+
+
+plot(spec_apis, col = 2, xlab = "Bees", ylab = "ASVs", ylim = c(0,110))
+plot(spec_imp, add = TRUE, col = 3)
+plot(spec_gris, add = TRUE, col = 4)
+legend("bottomright", legend = c("Apis mellifera", "Bombus impatiens", "Bombus griseocollis"), 
+       col=c(2,3,4 ), lty= 1:2, cex= 0.6,text.font=3, inset=.02)
+
+```
+
+# Indicator Species
+```{r indicator species}
+### apis ####
+# use A.mel as phyloseq object
+# make relative abundance table
+
+A.ra <- transform_sample_counts(A.mel, function(x) x/sum(x))
+A.ra
+# 100 taxa, 49 samples
+df.A.ra <- as(sample_data(A.ra), "data.frame") # not sure this is needed.
+otu_A.ra <- as.data.frame(t(as(otu_table(A.ra), "matrix")))
+
+## Infected type ##
+# use this option
+set.seed(311)
+A.type.indic = multipatt(otu_A.ra, df.A.ra$InfSeqType, max.order = NULL, control = how(nperm=999), duleg = TRUE)
+summary(A.type.indic, indvalcomp=T)
+
+# adjusting p values:
+A.type.indic$sign
+p_2 <- A.type.indic$sign$p.value
+## taking p values from that and making it a vector of just p values
+p_adj_2 <- round(p.adjust(p_2, "fdr"),3)
+## adjusting p values to do multiple comparisons,fdr --> false discovery rate
+cbind(p_adj_2,rownames(A.type.indic$sign))
+summary(A.type.indic, alpha=1)
+
+# Multi infection:
+# ASV50  0.739   0.002 *
+
+# Heat map
+Multi.indic.asv <- c( "ASV50")
+
+Multi.select.asv <-  subset_taxa(A.ra, ASV %in% Multi.indic.asv)
+
+write.csv(Multi.select.asv@tax_table, "Infection/Amel.select.asv.csv")
+
+A.multi.H <- plot_heatmap(Multi.select.asv, distance = "euclidean",
+                           taxa.label = "ASV", high = "red", low = "yellow", 
+                           na.value = "darkgray")
+A.multi.H + facet_grid(~InfSeqType, scales = "free_x")+ theme_bw() +theme(text=element_text(size = 16)) 
+# use theme_minimal but rotate x axis text?
+
+#ggsave("Infection/Amel.asv.hmap_new.jpeg", plot = last_plot(), device = NULL, path = NULL,  scale = 1, width = 10, height = 7.2, units = c("in"),   dpi = 600, limitsize = TRUE)
+
+# Maybe should have a column that is None, Nosema, Trypansome: issue is when a host has both/ not sure how to note.
+
+## strassoc ##
+# obtain confidence intervals
+A.type.stra = strassoc(otu_A.ra, cluster = df.A.ra$InfSeqType, func="IndVal.g", nboot.ci = 99)
+round(head(A.type.stra$stat),3)
+round(head(A.type.stra$lowerCI),3)
+round(head(A.type.stra$upperCI),3)
+
+### bombus gris ####
+Bgris.ra <- transform_sample_counts(B.gris, function(x) x/sum(x))
+Bgris.ra
+# 70 taxa, 21 samples
+df.Bgris.ra <- as(sample_data(Bgris.ra), "data.frame") # not sure this is needed.
+otu_Bgris.ra <- as.data.frame(t(as(otu_table(Bgris.ra), "matrix")))
+
+Bgris.tryp.indic = multipatt(otu_Bgris.ra, df.Bgris.ra$TrypSeq, max.order = NULL, control = how(nperm=99))
+summary(Bgris.tryp.indic, indvalcomp=T)
+
+# no significance. 
+
+#### bombus impatiens ####
+Bimp.ra <- transform_sample_counts(B.imp, function(x) x/sum(x))
+Bimp.ra
+# 97 taxa, 35 samples
+df.Bimp.ra <- as(sample_data(Bimp.ra), "data.frame") # not sure this is needed.
+otu_Bimp.ra <- as.data.frame(t(as(otu_table(Bimp.ra), "matrix")))
+
+## Trypansome Y/N ###
+set.seed(311)
+Bimp.Tryp.indic = multipatt(otu_Bimp.ra, df.Bimp.ra$TrypSeq, max.order = NULL, control = how(nperm=999))
+summary(Bimp.Tryp.indic, indvalcomp=T) # asv 25, 13, 29
+
+# adjusting p values:
+Bimp.Tryp.indic$sign
+p_2 <- Bimp.Tryp.indic$sign$p.value
+## taking p values from that and making it a vector of just p values
+p_adj_2 <- round(p.adjust(p_2, "fdr"),3)
+## adjusting p values to do multiple comparisons,fdr --> false discovery rate
+cbind(p_adj_2,rownames(Bimp.Tryp.indic$sign))
+summary(Bimp.Tryp.indic, alpha=1)
+
+# not infected
+# ASV25  0.654    0.008 * Flavobacteriaceae (family level)
+# ASV13  0.647    0.017 ** Gilliamella	apicola
+# ASV 29  0.639   0.044
+# Heat map
+Bimp.Tryp.indic.asv <- c( "ASV25", "ASV13", "ASV29")
+
+Bimp.Tryp.select.asv <-  subset_taxa(Bimp.ra, ASV %in% Bimp.Tryp.indic.asv)
+
+Bimp.Tryp.H <- plot_heatmap(Bimp.Tryp.select.asv, distance = "euclidean",
+                           taxa.label = "ASV", high = "red", low = "yellow", 
+                           na.value = "darkgray")
+Bimp.Tryp.H + facet_grid(~TrypSeq, scales = "free_x") + theme_bw() +theme(text=element_text(size = 16))
+
+# ggsave("Infection/Bimp.Tryp.asv.hmap.new.jpeg", plot = last_plot(), device = NULL, path = NULL,scale = 1, width = 10, height = 7.2, units = c("in"),dpi = 600, limitsize = TRUE)
+
+```
+
+ 
