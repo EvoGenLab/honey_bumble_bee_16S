@@ -5,7 +5,7 @@ Code:
 -	"Bee Preprocess” used to filter singletons, estimate Faith’s Phylogenetic Diversity (PD) and species richness (SR), rarefy sequence depth
 -	Bee_All_May2021-5-27-2022 – includes all analyses: dominant phyla, test for core bacteria, heatmap, alpha, beta, and gamma diversity, indicator species
 
-Data files used in analyses: DNA sequences, metadata, taxonomy, feature table, bacterial DNA sequences
+Data files used in analyses: DNA sequences, metadata, taxonomy, feature table, bacterial DNA sequences, bacterial phylogenetic tree (built using FstTree in QIIME2)
 
 Other files: ASV relative abundance table, bee species sub genus
 
